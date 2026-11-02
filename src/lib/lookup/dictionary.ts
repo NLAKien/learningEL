@@ -138,6 +138,16 @@ function clean(text: string): string {
 }
 
 /**
+ * Bản dịch có đáng tin là tiếng Việt không? Kho MyMemory có cả bản "dịch" nhầm
+ * vẫn là tiếng Anh (beyond -> "beyond imagination", chất lượng 74!).
+ */
+function looksVietnamese(text: string, source: string): boolean {
+  if (!text || text.length > 40 || /["“”]/.test(text)) return false;
+  if (new RegExp(`\\b${source}\\b`, "i").test(text)) return false; // còn chứa từ gốc
+  return /[^\x00-\x7F]/.test(text); // nghĩa tiếng Việt gần như luôn có dấu
+}
+
+/**
  * Dịch từng từ sang tiếng Việt (không theo ngữ cảnh) — dùng khi chưa có AI.
  * MyMemory lấy cả câu thoại phim trong kho dữ liệu (serendipity -> 'Quán "Tình cờ"...'),
  * nên tự chọn lại trong các kết quả: đúng từ gốc, ngắn gọn, chất lượng cao nhất.
@@ -154,15 +164,25 @@ export async function translateWord(word: string): Promise<string | undefined> {
 
     const options = (data.matches ?? [])
       .filter((m) => m.segment && clean(m.segment).toLowerCase() === target && m.translation)
-      .map((m) => ({ text: clean(m.translation!), quality: Number(m.quality) || 0, match: m.match ?? 0 }))
-      .filter((o) => o.text && o.text.toLowerCase() !== target && o.text.length <= 40 && !/["“”]/.test(o.text))
+      .map((m) => ({
+        text: clean(m.translation!),
+        quality: Number(m.quality) || 0,
+        match: m.match ?? 0,
+        exact: m.segment!.trim().toLowerCase() === target, // đúng từ, không kèm dấu câu
+      }))
+      .filter((o) => looksVietnamese(o.text, target))
       .sort((a, b) => b.quality - a.quality || b.match - a.match);
 
-    if (options[0]) return options[0].text;
+    // Lấy bản tốt nhất; thêm bản thứ hai nếu khác nghĩa và cũng được chấm chất lượng khá
+    const picked: string[] = [];
+    for (const o of options) {
+      if (picked.some((p) => p.toLowerCase() === o.text.toLowerCase())) continue;
+      if (picked.length === 0 || (picked.length === 1 && o.exact && o.quality >= 50)) picked.push(o.text);
+    }
+    if (picked.length) return picked.join("; ");
 
     const fallback = clean(data.responseData?.translatedText ?? "");
-    if (!fallback || fallback.toLowerCase() === target || fallback.length > 40 || /["“”]/.test(fallback)) return undefined;
-    return fallback;
+    return looksVietnamese(fallback, target) ? fallback : undefined;
   } catch {
     return undefined;
   }
