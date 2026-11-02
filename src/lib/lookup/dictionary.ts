@@ -1,6 +1,7 @@
 /**
- * Chạy phía server. Tra phiên âm + định nghĩa tiếng Anh (Free Dictionary API)
- * và nghĩa tiếng Việt dự phòng (MyMemory) — cả hai miễn phí, không cần key.
+ * Chạy phía server. Tra phiên âm + từ loại + định nghĩa tiếng Anh
+ * (Datamuse, dự phòng Free Dictionary API) và nghĩa tiếng Việt (MyMemory).
+ * Tất cả miễn phí, không cần key.
  */
 interface DictEntry {
   phonetic?: string;
@@ -35,7 +36,7 @@ async function fetchWithRetry(url: string, label: string): Promise<Response | nu
   return null;
 }
 
-export async function lookupDictionary(word: string): Promise<DictionaryInfo> {
+async function lookupFreeDictionary(word: string): Promise<DictionaryInfo> {
   try {
     const res = await fetchWithRetry(
       `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`,
@@ -66,7 +67,81 @@ export async function lookupDictionary(word: string): Promise<DictionaryInfo> {
   }
 }
 
-/** Dịch từng từ sang tiếng Việt (không theo ngữ cảnh) — dùng khi chưa có AI. */
+const POS: Record<string, string> = { n: "noun", v: "verb", adj: "adjective", adv: "adverb", prop: "proper noun" };
+
+interface DatamuseWord {
+  word: string;
+  tags?: string[];
+  defs?: string[];
+}
+
+/** Datamuse: nhanh, ổn định, có IPA và định nghĩa gắn từ loại (dữ liệu từ Wiktionary/WordNet). */
+async function lookupDatamuse(word: string): Promise<DictionaryInfo> {
+  try {
+    const res = await fetchWithRetry(
+      `https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&md=dpr&ipa=1&max=1`,
+      `Datamuse "${word}"`,
+    );
+    if (!res?.ok) return { found: false };
+    const data = (await res.json()) as DatamuseWord[];
+    const entry = data[0];
+    if (!entry || entry.word.toLowerCase() !== word.toLowerCase()) return { found: true };
+
+    const tags = entry.tags ?? [];
+    const ipa = tags.find((t) => t.startsWith("ipa_pron:"))?.slice("ipa_pron:".length).trim();
+    // Từ loại: lấy theo thứ tự xuất hiện trong định nghĩa, sau đó tới tags
+    const posKeys = [...(entry.defs ?? []).map((d) => d.split("\t")[0]), ...tags];
+    const partsOfSpeech = [...new Set(posKeys.map((k) => POS[k]).filter(Boolean))];
+    // Định nghĩa dạng "n\tThe word ... [giải thích thêm]" -> bỏ tiền tố và phần trong []
+    const def = entry.defs?.[0]?.split("\t")[1]?.replace(/\s*\[.*$/, "").trim();
+
+    return {
+      found: true,
+      phonetic: ipa ? `/${ipa}/` : undefined,
+      partOfSpeech: partsOfSpeech.join(" / ") || undefined,
+      definitionEn: def || undefined,
+    };
+  } catch (err) {
+    console.warn(`[lookup] Không đọc được dữ liệu Datamuse "${word}":`, err);
+    return { found: false };
+  }
+}
+
+/** Datamuse trước; thiếu gì thì hỏi thêm Free Dictionary (có file audio phát âm). */
+export async function lookupDictionary(word: string): Promise<DictionaryInfo> {
+  const primary = await lookupDatamuse(word);
+  if (primary.phonetic && primary.definitionEn) return primary;
+  const backup = await lookupFreeDictionary(word);
+  return {
+    found: primary.found || backup.found,
+    phonetic: primary.phonetic ?? backup.phonetic,
+    partOfSpeech: primary.partOfSpeech ?? backup.partOfSpeech,
+    definitionEn: primary.definitionEn ?? backup.definitionEn,
+    audioUrl: backup.audioUrl,
+  };
+}
+
+interface MyMemoryResponse {
+  responseData?: { translatedText?: string };
+  matches?: { segment?: string; translation?: string; quality?: string | number; match?: number }[];
+}
+
+/** Bỏ dấu câu, gạch đầu dòng, "..." ở hai đầu; "Tình Cờ" -> "tình cờ" */
+function clean(text: string): string {
+  let t = text
+    .replace(/\.{3}|…/g, "")
+    .replace(/^[\s\-–—"'“”«»(]+|[\s.!?,;:"'“”»)]+$/g, "")
+    .trim();
+  const words = t.split(/\s+/);
+  if (words.length > 1 && words.every((w) => /^\p{Lu}/u.test(w))) t = t.toLowerCase();
+  return t;
+}
+
+/**
+ * Dịch từng từ sang tiếng Việt (không theo ngữ cảnh) — dùng khi chưa có AI.
+ * MyMemory lấy cả câu thoại phim trong kho dữ liệu (serendipity -> 'Quán "Tình cờ"...'),
+ * nên tự chọn lại trong các kết quả: đúng từ gốc, ngắn gọn, chất lượng cao nhất.
+ */
 export async function translateWord(word: string): Promise<string | undefined> {
   try {
     const res = await fetchWithRetry(
@@ -74,11 +149,20 @@ export async function translateWord(word: string): Promise<string | undefined> {
       `Dịch "${word}"`,
     );
     if (!res?.ok) return undefined;
-    const data = (await res.json()) as { responseData?: { translatedText?: string } };
-    const text = data.responseData?.translatedText?.trim();
-    // MyMemory trả lại nguyên từ khi không dịch được
-    if (!text || text.toLowerCase() === word.toLowerCase()) return undefined;
-    return text;
+    const data = (await res.json()) as MyMemoryResponse;
+    const target = word.toLowerCase();
+
+    const options = (data.matches ?? [])
+      .filter((m) => m.segment && clean(m.segment).toLowerCase() === target && m.translation)
+      .map((m) => ({ text: clean(m.translation!), quality: Number(m.quality) || 0, match: m.match ?? 0 }))
+      .filter((o) => o.text && o.text.toLowerCase() !== target && o.text.length <= 40 && !/["“”]/.test(o.text))
+      .sort((a, b) => b.quality - a.quality || b.match - a.match);
+
+    if (options[0]) return options[0].text;
+
+    const fallback = clean(data.responseData?.translatedText ?? "");
+    if (!fallback || fallback.toLowerCase() === target || fallback.length > 40 || /["“”]/.test(fallback)) return undefined;
+    return fallback;
   } catch {
     return undefined;
   }
