@@ -18,7 +18,6 @@ export default function AddWordsPage() {
   const [lookups, setLookups] = useState<Map<string, LookupResult>>(new Map());
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [aiOn, setAiOn] = useState<boolean | null>(null);
   const [message, setMessage] = useState<{ text: string; link?: boolean } | null>(null);
 
   useEffect(() => setLevelState(getLevel()), []);
@@ -41,11 +40,10 @@ export default function AddWordsPage() {
     if (!found.length) return;
 
     setLoading(true);
-    const { ai } = await lookupWords(
+    await lookupWords(
       found.map((c) => ({ lemma: c.lemma, surface: c.surface, context: c.context })),
       (partial) => setLookups(partial),
     );
-    if (ai !== null) setAiOn(ai);
     setLoading(false);
   }
 
@@ -146,12 +144,6 @@ export default function AddWordsPage() {
             </div>
           </div>
 
-          {aiOn === false && (
-            <p className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Nghĩa đang được dịch từng từ, chưa theo ngữ cảnh. Thêm <code>ANTHROPIC_API_KEY</code> vào{" "}
-              <code>.env.local</code> để dịch đúng nghĩa trong câu (xem README).
-            </p>
-          )}
 
           <ul className="divide-y divide-stone-200 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm">
             {candidates.map((c) => {
