@@ -3,12 +3,19 @@
  * Bản 2: viết storage/supabase.ts với cùng các hàm rồi đổi chỗ import.
  */
 import { DEFAULT_LEVEL, LEVELS, type Level } from "../nlp/data/common-words";
+import { resolveWordInfo } from "../lookup/resolve";
+import { assignDecks, normalizeDecks } from "../review/decks";
+import type { ReviewMode } from "../review/mode";
 import { initialSrs } from "../srs/sm2";
 import type { Card, LookupResult, WordCandidate } from "../types";
 
 const CARDS_KEY = "learningEL.cards";
 const KNOWN_KEY = "learningEL.knownWords";
 const LEVEL_KEY = "learningEL.level";
+const MODE_KEY = "learningEL.reviewMode";
+// Tăng số này khi cần xếp lại toàn bộ bộ thẻ một lần (v2: sửa lỗi bộ thẻ bị xáo lúc mới ra tính năng)
+const DECKS_VERSION = 2;
+const DECKS_VERSION_KEY = "learningEL.decksVersion";
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -34,11 +41,31 @@ function write(key: string, value: unknown): void {
 // ---------- Thẻ ----------
 
 export function getCards(): Card[] {
-  return read<Card[]>(CARDS_KEY, []);
+  let cards = read<Card[]>(CARDS_KEY, []);
+  let changed = false;
+  if (read<number>(DECKS_VERSION_KEY, 0) < DECKS_VERSION) {
+    // Xếp lại toàn bộ theo thứ tự thêm thẻ (thứ tự trong mảng), mỗi bộ 10 thẻ
+    cards = cards.map((c) => ({ ...c, deck: undefined }));
+    write(DECKS_VERSION_KEY, DECKS_VERSION);
+    changed = true;
+  }
+  // Thẻ chưa có bộ, hoặc số bộ bị hổng (đã xoá hết một bộ): sắp xếp lại
+  const normalized = normalizeDecks(cards);
+  if (changed || normalized.some((c, i) => c.deck !== cards[i].deck)) {
+    write(CARDS_KEY, normalized);
+  }
+  return normalized;
 }
 
+/**
+ * Lưu thay đổi của một thẻ. GỘP với bản đang lưu thay vì ghi đè cả thẻ:
+ * nếu trang đang giữ một bản cũ thiếu trường (vd. chưa có số bộ), trường đó không bị mất.
+ */
 export function saveCard(card: Card): void {
-  write(CARDS_KEY, getCards().map((c) => (c.id === card.id ? card : c)));
+  write(
+    CARDS_KEY,
+    getCards().map((c) => (c.id === card.id ? { ...c, ...card, deck: card.deck ?? c.deck } : c)),
+  );
 }
 
 export function deleteCard(id: string): void {
@@ -49,6 +76,7 @@ export interface NewCardInput {
   candidate: WordCandidate;
   lookup?: LookupResult;
   meaning?: string; // nghĩa người dùng tự sửa (ưu tiên hơn lookup)
+  contextVi?: string; // bản dịch câu gốc
 }
 
 /** Tạo thẻ mới; bỏ qua lemma đã có thẻ. Trả về số thẻ mới. */
@@ -58,21 +86,37 @@ export function addCards(inputs: NewCardInput[]): number {
   const now = new Date();
   const fresh: Card[] = inputs
     .filter(({ candidate }) => !existing.has(candidate.lemma))
-    .map(({ candidate: c, lookup, meaning }) => ({
+    .map(({ candidate: c, lookup, meaning, contextVi }) => ({
+      ...resolveWordInfo(lookup, c.surface, c.context), // từ loại + định nghĩa theo câu
       id: crypto.randomUUID(),
       lemma: c.lemma,
       surface: c.surface,
       context: c.context,
+      contextVi,
       meaning: meaning?.trim() || lookup?.meaning,
       phonetic: lookup?.phonetic,
-      partOfSpeech: lookup?.partOfSpeech,
-      definitionEn: lookup?.definitionEn,
       audioUrl: lookup?.audioUrl,
       createdAt: now.toISOString(),
       srs: initialSrs(now),
     }));
-  write(CARDS_KEY, [...cards, ...fresh]);
+  write(CARDS_KEY, assignDecks([...cards, ...fresh]));
   return fresh.length;
+}
+
+/** Chuyển thẻ sang "Từ đã biết": xoá thẻ, thêm từ vào danh sách đã biết. Trả về thẻ để hoàn tác. */
+export function markCardKnown(id: string): Card | undefined {
+  const card = getCards().find((c) => c.id === id);
+  if (!card) return undefined;
+  deleteCard(id);
+  addKnownWords([card.lemma]);
+  return card;
+}
+
+/** Hoàn tác markCardKnown: trả thẻ về (giữ nguyên bộ và lịch ôn), bỏ khỏi danh sách đã biết. */
+export function restoreCard(card: Card): void {
+  const cards = getCards();
+  if (!cards.some((c) => c.id === card.id)) write(CARDS_KEY, [...cards, card]);
+  removeKnownWord(card.lemma);
 }
 
 // ---------- Từ đã biết ----------
@@ -104,6 +148,16 @@ export function setLevel(level: Level): void {
   write(LEVEL_KEY, level);
 }
 
+// ---------- Chế độ ôn ----------
+
+export function getReviewMode(): ReviewMode {
+  return read<string>(MODE_KEY, "en-vi") === "vi-en" ? "vi-en" : "en-vi";
+}
+
+export function setReviewMode(mode: ReviewMode): void {
+  write(MODE_KEY, mode);
+}
+
 // ---------- Sao lưu ----------
 
 export interface Backup {
@@ -131,8 +185,10 @@ export function importData(data: Backup): { cards: number; knownWords: number } 
   }
   const cards = getCards();
   const existing = new Set(cards.map((c) => c.lemma));
-  const added = data.cards.filter((c) => c?.lemma && c.srs && !existing.has(c.lemma));
-  write(CARDS_KEY, [...cards, ...added]);
+  const added = data.cards
+    .filter((c) => c?.lemma && c.srs && !existing.has(c.lemma))
+    .map((c) => ({ ...c, deck: undefined })); // xếp lại bộ theo dữ liệu hiện có
+  write(CARDS_KEY, assignDecks([...cards, ...added]));
   const before = getKnownWords().size;
   addKnownWords(data.knownWords ?? []);
   return { cards: added.length, knownWords: getKnownWords().size - before };

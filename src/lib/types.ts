@@ -15,13 +15,16 @@ export interface Card {
   lemma: string; // dạng gốc: "run"
   surface: string; // dạng xuất hiện trong văn bản: "running"
   context: string; // câu gốc chứa từ
+  contextVi?: string; // bản dịch tiếng Việt của câu gốc
   meaning?: string; // nghĩa tiếng Việt (theo ngữ cảnh nếu có AI)
   phonetic?: string; // phiên âm IPA
   partOfSpeech?: string; // noun, verb...
   definitionEn?: string; // định nghĩa tiếng Anh
   audioUrl?: string; // file phát âm, nếu từ điển có
   createdAt: string;
-  srs: SrsState;
+  deck?: number; // số bộ (mỗi bộ 10 thẻ), gán tự động
+  srs: SrsState; // lịch ôn chiều Anh → Việt
+  srsReverse?: SrsState; // lịch ôn chiều Việt → Anh (tạo khi ôn chiều này lần đầu)
 }
 
 /** Một từ ứng viên lọc ra từ đoạn văn */
@@ -36,6 +39,7 @@ export interface WordCandidate {
 /** Kết quả tra một từ, trả về từ /api/lookup */
 export interface LookupResult {
   lemma: string;
+  definitions?: { pos: string; text: string }[]; // định nghĩa theo từng từ loại
   meaning?: string;
   phonetic?: string;
   partOfSpeech?: string;

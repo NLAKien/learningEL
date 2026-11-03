@@ -14,10 +14,10 @@ export function splitSentences(text: string): string[] {
     .filter(Boolean);
 }
 
-const WORD_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+export const WORD_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
 
 /** Bỏ đuôi rút gọn: "it's" -> "it", "they're" -> "they"; "don't" -> null (bỏ qua). */
-function stripContraction(word: string): string | null {
+export function stripContraction(word: string): string | null {
   const w = word.replace(/’/g, "'");
   if (/n't$/i.test(w)) return null;
   return w.replace(/'(s|re|ll|ve|d|m)$/i, "");

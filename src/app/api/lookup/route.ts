@@ -46,6 +46,7 @@ export async function POST(req: Request) {
           audioUrl: dict.audioUrl,
           partOfSpeech: ai?.partOfSpeech ?? dict.partOfSpeech,
           definitionEn: dict.definitionEn,
+          definitions: dict.definitions,
           source: ai ? "ai" : meaning || dict.definitionEn ? "dictionary" : "none",
           // dict.found = từ điển đã trả lời (kể cả "không có từ này")
           complete: Boolean(meaning) && dict.found,

@@ -63,3 +63,42 @@ Reply with ONLY a JSON array, one object per word, in the same order:
   }
   return result;
 }
+
+/** Dịch cả câu sang tiếng Việt bằng Claude. Trả null nếu chưa bật AI hoặc lỗi. */
+export async function translateSentencesAI(sentences: string[]): Promise<string[] | null> {
+  if (!aiEnabled() || sentences.length === 0) return null;
+  const list = sentences.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  const prompt = `Translate each English sentence below into natural Vietnamese.
+
+${list}
+
+Reply with ONLY a JSON array of strings, one translation per sentence, in the same order.`;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 200 * sentences.length + 200,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!res.ok) {
+      console.error("[translate] Claude API lỗi", res.status, await res.text());
+      return null;
+    }
+    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+    const text = data.content?.find((c) => c.type === "text")?.text ?? "";
+    const parsed = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1)) as unknown[];
+    if (!Array.isArray(parsed) || parsed.length !== sentences.length) return null;
+    return parsed.map((t) => String(t ?? ""));
+  } catch (err) {
+    console.error("[translate] Không đọc được phản hồi AI", err);
+    return null;
+  }
+}

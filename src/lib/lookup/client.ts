@@ -3,7 +3,7 @@ import type { LookupRequestItem, LookupResult } from "../types";
 
 const BATCH = 25;
 // Đổi hậu tố version khi thay cách tra nghĩa, để bỏ kết quả cũ đã cache
-const CACHE_KEY = "learningEL.lookupCache.v4";
+const CACHE_KEY = "learningEL.lookupCache.v5";
 
 function readCache(): Record<string, LookupResult> {
   try {

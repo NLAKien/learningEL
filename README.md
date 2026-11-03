@@ -15,7 +15,7 @@ npm run typecheck
 
 ## Tính năng hiện có
 
-- **Thêm từ**: dán đoạn văn (hoặc 1–3 từ) → lọc từ mới theo trình độ A2–C2 → tự tra phiên âm, phát âm, từ loại, nghĩa tiếng Việt → sửa nghĩa nếu cần → tạo thẻ. Từ bỏ chọn được ghi nhớ là "đã biết".
+- **Thêm từ**: dán đoạn văn → app **dịch từng câu** (song ngữ Anh–Việt, từ mới tô vàng ngay trong câu) → bên dưới là danh sách từ mới lọc theo trình độ A2–C2, có phiên âm, phát âm, từ loại, nghĩa tiếng Việt. Bấm vào bất kỳ từ nào trong câu để thêm/bỏ. Thẻ lưu kèm bản dịch câu gốc. Từ bỏ chọn được ghi nhớ là "đã biết".
 - **Ôn tập**: lặp lại ngắt quãng SM-2, hiện câu gốc, phát âm, xem trước khoảng ôn của từng nút. Phím tắt: `Space` hiện đáp án, `1–4` chấm điểm.
 - **Thẻ của tôi**: thống kê, tìm kiếm, sửa nghĩa, xoá, tra bù nghĩa cho thẻ thiếu, quản lý từ đã biết, sao lưu/nhập file JSON.
 
@@ -28,6 +28,7 @@ Trình duyệt gọi `POST /api/lookup` (file `src/app/api/lookup/route.ts`, ch�
 | Phiên âm, file phát âm, định nghĩa tiếng Anh | Free Dictionary API | Không |
 | Nghĩa tiếng Việt theo ngữ cảnh câu | Claude API (`src/lib/lookup/ai.ts`) | `ANTHROPIC_API_KEY` |
 | Nghĩa tiếng Việt từng từ (dự phòng) | MyMemory | Không |
+| Dịch cả câu | Claude qua `/api/translate` nếu có key; không thì trình duyệt gọi thẳng MyMemory (`src/lib/lookup/translate-client.ts`) | Không |
 
 Không có key vẫn dùng được, chỉ là nghĩa không theo ngữ cảnh (ví dụ *bank* luôn ra "ngân hàng"). Muốn bật AI: copy `.env.example` thành `.env.local`, điền key, rồi **khởi động lại** `npm run dev`. Kết quả được cache ở server và trong trình duyệt nên mỗi từ chỉ tra một lần.
 
@@ -39,8 +40,9 @@ src/
     page.tsx              Thêm từ
     review/page.tsx       Ôn tập
     cards/page.tsx        Thẻ của tôi
-    api/lookup/route.ts   API tra nghĩa (server)
-  components/             Nav, Highlight, SpeakButton
+    api/lookup/route.ts   API tra nghĩa từ (server)
+    api/translate/route.ts API dịch câu bằng AI (server, chỉ khi có key)
+  components/             Nav, Highlight, SpeakButton, SentenceView (câu song ngữ bấm được từng từ)
   lib/
     types.ts
     format.ts             Hiển thị khoảng thời gian

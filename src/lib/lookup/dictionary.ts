@@ -1,3 +1,5 @@
+import type { DefinitionEntry } from "../nlp/pos";
+
 /**
  * Chạy phía server. Tra phiên âm + từ loại + định nghĩa tiếng Anh
  * (Datamuse, dự phòng Free Dictionary API) và nghĩa tiếng Việt (MyMemory).
@@ -16,8 +18,15 @@ export interface DictionaryInfo {
   found: boolean;
   phonetic?: string;
   audioUrl?: string;
-  partOfSpeech?: string;
-  definitionEn?: string;
+  partOfSpeech?: string; // các từ loại có thể, "noun / verb"
+  definitionEn?: string; // định nghĩa đầu tiên
+  definitions?: DefinitionEntry[]; // định nghĩa đầu tiên của TỪNG từ loại, để chọn theo câu
+}
+
+/** Mỗi từ loại giữ một định nghĩa (cái đầu tiên) */
+function onePerPos(defs: DefinitionEntry[]): DefinitionEntry[] {
+  const seen = new Set<string>();
+  return defs.filter((d) => d.text && !seen.has(d.pos) && seen.add(d.pos));
 }
 
 /** fetch có thử lại 1 lần nếu lỗi mạng / quá thời gian / server 5xx / 429 */
@@ -60,6 +69,9 @@ async function lookupFreeDictionary(word: string): Promise<DictionaryInfo> {
       audioUrl: phonetics.find((p) => p.audio)?.audio || undefined,
       partOfSpeech: partsOfSpeech.join(" / ") || undefined,
       definitionEn: meanings[0]?.definitions?.[0]?.definition,
+      definitions: onePerPos(
+        meanings.map((m) => ({ pos: m.partOfSpeech ?? "", text: m.definitions?.[0]?.definition ?? "" })),
+      ),
     };
   } catch (err) {
     console.warn(`[lookup] Không đọc được dữ liệu từ điển "${word}":`, err);
@@ -92,14 +104,25 @@ async function lookupDatamuse(word: string): Promise<DictionaryInfo> {
     // Từ loại: lấy theo thứ tự xuất hiện trong định nghĩa, sau đó tới tags
     const posKeys = [...(entry.defs ?? []).map((d) => d.split("\t")[0]), ...tags];
     const partsOfSpeech = [...new Set(posKeys.map((k) => POS[k]).filter(Boolean))];
-    // Định nghĩa dạng "n\tThe word ... [giải thích thêm]" -> bỏ tiền tố và phần trong []
-    const def = entry.defs?.[0]?.split("\t")[1]?.replace(/\s*\[.*$/, "").trim();
+    // Định nghĩa dạng "n\tThe word ... [giải thích thêm]" -> tách từ loại, bỏ phần trong []
+    const definitions = onePerPos(
+      (entry.defs ?? []).map((d) => {
+        const [key, text = ""] = d.split("\t");
+        return {
+          pos: POS[key] ?? key,
+          // bỏ "[giải thích thêm]" ở cuối và nhãn "(transitive)", "(obsolete)"… ở đầu
+          text: text.replace(/\s*\[.*$/, "").replace(/^(\([^)]*\)\s*)+/, "").trim(),
+        };
+      }),
+    );
+    const def = definitions[0]?.text;
 
     return {
       found: true,
       phonetic: ipa ? `/${ipa}/` : undefined,
       partOfSpeech: partsOfSpeech.join(" / ") || undefined,
       definitionEn: def || undefined,
+      definitions,
     };
   } catch (err) {
     console.warn(`[lookup] Không đọc được dữ liệu Datamuse "${word}":`, err);
@@ -117,6 +140,7 @@ export async function lookupDictionary(word: string): Promise<DictionaryInfo> {
     phonetic: primary.phonetic ?? backup.phonetic,
     partOfSpeech: primary.partOfSpeech ?? backup.partOfSpeech,
     definitionEn: primary.definitionEn ?? backup.definitionEn,
+    definitions: primary.definitions?.length ? primary.definitions : backup.definitions,
     audioUrl: backup.audioUrl,
   };
 }

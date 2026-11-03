@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isDue } from "@/lib/srs/sm2";
-import { CHANGE_EVENT, getCards } from "@/lib/storage/local";
+import { dueCards } from "@/lib/review/mode";
+import { CHANGE_EVENT, getCards, getReviewMode } from "@/lib/storage/local";
 
 const LINKS = [
   { href: "/", label: "Thêm từ" },
@@ -17,7 +17,8 @@ export function Nav() {
   const [due, setDue] = useState(0);
 
   useEffect(() => {
-    const refresh = () => setDue(getCards().filter((c) => isDue(c.srs)).length);
+    // Số thẻ đến hạn theo chế độ ôn đang chọn
+    const refresh = () => setDue(dueCards(getCards(), getReviewMode()).length);
     refresh();
     window.addEventListener(CHANGE_EVENT, refresh);
     window.addEventListener("storage", refresh); // tab khác thay đổi
